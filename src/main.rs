@@ -28,7 +28,6 @@ unsafe extern "system" fn mouse_proc(n_code: i32, w_param: usize, l_param: isize
         if let Some(previous_time) = *last_time {
             let duration = now.duration_since(previous_time);
             if duration < DEBOUNCE_THRESHOLD {
-                eprintln!("duration: {:?}", duration);
                 return 1; // Suppress duplicate click
             }
         }
