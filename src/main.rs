@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(feature = "windowless", windows_subsystem = "windows")]
 
 use std::{
     mem, ptr,
@@ -13,25 +13,72 @@ use windows_sys::Win32::{
     System::LibraryLoader::GetModuleHandleW,
     UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, MSG,
-        WH_MOUSE_LL, WM_MBUTTONDOWN,
+        WH_MOUSE_LL, WM_MBUTTONDOWN, WM_MBUTTONUP,
     },
 };
 
-static LAST_CLICK_TIME: Mutex<Option<Instant>> = Mutex::new(None);
-const DEBOUNCE_THRESHOLD: Duration = Duration::from_millis(200);
+// static LAST_BUTTONDOWN_TIME: Mutex<Option<Instant>> = Mutex::new(None);
+// static LAST_SUPPRESSED_BUTTONDOWN_TIME: Mutex<Option<Instant>> = Mutex::new(None);
+
+static LAST_BUTTONDOWN_TIME: Mutex<Option<Instant>> = Mutex::new(None);
+static SUPPRESS_BUTTONUP_COUNT: Mutex<usize> = Mutex::new(0);
+
+const DEBOUNCE_THRESHOLD: Duration = Duration::from_millis(250);
 
 unsafe extern "system" fn mouse_proc(n_code: i32, w_param: usize, l_param: isize) -> isize {
-    if n_code >= 0 && (w_param == WM_MBUTTONDOWN as usize) {
-        let mut last_time = LAST_CLICK_TIME.lock().unwrap();
-        let now = Instant::now();
+    let now = Instant::now();
 
-        if let Some(previous_time) = *last_time {
+    // if n_code >= 0 && (w_param == WM_MBUTTONDOWN as usize) {
+    //     eprintln!("button down: {now:?}");
+    //     let mut last_buttondown_time = LAST_BUTTONDOWN_TIME.lock().unwrap();
+    //     if let Some(previous_time) = *last_buttondown_time {
+    //         let duration = now.duration_since(previous_time);
+    //         if duration < DEBOUNCE_THRESHOLD {
+    //             let mut last_supressed_buttondown_time =
+    //                 LAST_SUPPRESSED_BUTTONDOWN_TIME.lock().unwrap();
+    //             *last_supressed_buttondown_time = Some(now);
+    //             eprintln!("suppressed button down: {:?}", duration);
+    //             return 1; // Suppress duplicate click
+    //         }
+    //     }
+    //     *last_buttondown_time = Some(now);
+    // }
+
+    // if n_code >= 0 && (w_param == WM_MBUTTONUP as usize) {
+    //     eprintln!("button up: {now:?}");
+    //     let last_supressed_buttondown_time = LAST_SUPPRESSED_BUTTONDOWN_TIME.lock().unwrap();
+    //     if let Some(supressed_time) = *last_supressed_buttondown_time {
+    //         let duration = now.duration_since(supressed_time);
+    //         if duration < DEBOUNCE_THRESHOLD {
+    //             eprintln!("suppressed button up: {:?}", duration);
+    //             return 1; // Suppress duplicate click
+    //         }
+    //     }
+    // }
+
+    if n_code >= 0 && (w_param == WM_MBUTTONDOWN as usize) {
+        eprintln!("button down: {now:?}");
+        let mut last_buttondown_time = LAST_BUTTONDOWN_TIME.lock().unwrap();
+        if let Some(previous_time) = *last_buttondown_time {
             let duration = now.duration_since(previous_time);
             if duration < DEBOUNCE_THRESHOLD {
+                let mut supress_buttonup_count = SUPPRESS_BUTTONUP_COUNT.lock().unwrap();
+                *supress_buttonup_count += 1;
+                eprintln!("suppressed button down: {:?}", duration);
                 return 1; // Suppress duplicate click
             }
         }
-        *last_time = Some(now);
+        *last_buttondown_time = Some(now);
+    }
+
+    if n_code >= 0 && (w_param == WM_MBUTTONUP as usize) {
+        eprintln!("button up: {now:?}");
+        let mut supress_buttonup_count = SUPPRESS_BUTTONUP_COUNT.lock().unwrap();
+        if *supress_buttonup_count > 0 {
+            *supress_buttonup_count = *supress_buttonup_count - 1;
+            eprintln!("suppressed button up: {:?}", *supress_buttonup_count);
+            return 1; // Suppress duplicate click
+        }
     }
 
     CallNextHookEx(ptr::null_mut(), n_code, w_param, l_param)
